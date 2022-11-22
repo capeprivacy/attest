@@ -172,6 +172,56 @@ func TestVerifyCertChains(t *testing.T) {
 	}
 }
 
+func TestVerifyInvalidIntermediate(t *testing.T) {
+	k, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parent := createParentCert(t, k)
+
+	intermediateTemplate := &x509.Certificate{
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		SubjectKeyId:          []byte{4, 5, 6},
+		SerialNumber:          big.NewInt(5678),
+		Subject: pkix.Name{
+			Country:      []string{"Mars"},
+			Organization: []string{"Olympus Mons"},
+		},
+		NotBefore: time.Now().Add(-time.Hour),
+		NotAfter:  time.Now().Add(time.Hour),
+		KeyUsage:  x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+	}
+
+	// passing the same cert for parent and template makes the cert self signed.
+	intermediate := createChildCert(t, intermediateTemplate, intermediateTemplate, k)
+
+	// since intermediate is not connecting to parent then we should error
+	cert := createChildCert(t, intermediate, &x509.Certificate{
+		IsCA:                  false,
+		BasicConstraintsValid: true,
+		SubjectKeyId:          []byte{7, 8, 9},
+		SerialNumber:          big.NewInt(9101112),
+		Subject: pkix.Name{
+			Country:      []string{"Jupiter"},
+			Organization: []string{"Red"},
+		},
+		NotBefore: time.Now().Add(-time.Hour),
+		NotAfter:  time.Now().Add(time.Hour),
+		KeyUsage:  x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+	}, k)
+
+	err = verifyCertChain(cert, parent, [][]byte{intermediate.Raw})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	if err.Error() != "x509: certificate signed by unknown authority" {
+		t.Fatal("expected certificate signed by unknown authority error")
+	}
+}
+
 func TestAttest(t *testing.T) {
 	k, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	if err != nil {
