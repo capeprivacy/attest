@@ -126,22 +126,23 @@ func verifySignature(cert *x509.Certificate, msg *cose.Sign1Message) error {
 }
 
 func verifyCertChain(cert *x509.Certificate, rootCert *x509.Certificate, cabundle [][]byte) error {
-	pool := x509.NewCertPool()
+	roots := x509.NewCertPool()
 
-	pool.AddCert(rootCert)
+	roots.AddCert(rootCert)
 
+	intermediates := x509.NewCertPool()
 	for _, certBy := range cabundle {
 		cert, err := x509.ParseCertificate(certBy)
 		if err != nil {
 			return err
 		}
 
-		pool.AddCert(cert)
+		intermediates.AddCert(cert)
 	}
 
 	opts := x509.VerifyOptions{
-		Roots:         pool,
-		Intermediates: x509.NewCertPool(),
+		Roots:         roots,
+		Intermediates: intermediates,
 		CurrentTime:   time.Now().UTC(),
 	}
 

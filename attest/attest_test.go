@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
-
 	"github.com/veraison/go-cose"
 )
 
@@ -85,13 +84,8 @@ func TestVerifySig(t *testing.T) {
 	}
 }
 
-func newCertAndCabundle(t *testing.T) (*ecdsa.PrivateKey, *x509.Certificate, []byte) {
+func createParentCert(t *testing.T, k *ecdsa.PrivateKey) *x509.Certificate {
 	t.Helper()
-
-	k, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	parent := &x509.Certificate{
 		IsCA:                  true,
@@ -104,8 +98,7 @@ func newCertAndCabundle(t *testing.T) (*ecdsa.PrivateKey, *x509.Certificate, []b
 		},
 		NotBefore: time.Now().Add(-time.Hour),
 		NotAfter:  time.Now().Add(time.Hour),
-		// see http://golang.org/pkg/crypto/x509/#KeyUsage
-		KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		KeyUsage:  x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 	}
 
 	parentBy, err := x509.CreateCertificate(rand.Reader, parent, parent, &k.PublicKey, k)
@@ -113,50 +106,107 @@ func newCertAndCabundle(t *testing.T) (*ecdsa.PrivateKey, *x509.Certificate, []b
 		t.Fatal(err)
 	}
 
-	template := &x509.Certificate{
-		IsCA:                  false,
-		BasicConstraintsValid: true,
-		SubjectKeyId:          []byte{1, 2, 3},
-		SerialNumber:          big.NewInt(1234),
-		Subject: pkix.Name{
-			Country:      []string{"Jupiter"},
-			Organization: []string{"Solar System"},
-		},
-		NotBefore: time.Now().Add(-time.Hour),
-		NotAfter:  time.Now().Add(time.Hour),
-		// see http://golang.org/pkg/crypto/x509/#KeyUsage
-		KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-	}
-
-	by, err := x509.CreateCertificate(rand.Reader, template, parent, &k.PublicKey, k)
+	parentCert, err := x509.ParseCertificate(parentBy)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	cert, err := x509.ParseCertificate(by)
+	return parentCert
+}
+
+func createChildCert(t *testing.T, parent, child *x509.Certificate, k *ecdsa.PrivateKey) *x509.Certificate {
+	t.Helper()
+
+	childBy, err := x509.CreateCertificate(rand.Reader, child, parent, &k.PublicKey, k)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	return k, cert, parentBy
+	childCert, err := x509.ParseCertificate(childBy)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return childCert
 }
 
 func TestVerifyCertChains(t *testing.T) {
-	_, cert, parent := newCertAndCabundle(t)
-
-	parentCert, err := x509.ParseCertificate(parent)
+	k, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = verifyCertChain(cert, parentCert, [][]byte{parent})
+	parent := createParentCert(t, k)
+
+	intermediate := createChildCert(t, parent, &x509.Certificate{
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		SubjectKeyId:          []byte{4, 5, 6},
+		SerialNumber:          big.NewInt(5678),
+		Subject: pkix.Name{
+			Country:      []string{"Mars"},
+			Organization: []string{"Olympus Mons"},
+		},
+		NotBefore: time.Now().Add(-time.Hour),
+		NotAfter:  time.Now().Add(time.Hour),
+		KeyUsage:  x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+	}, k)
+
+	cert := createChildCert(t, intermediate, &x509.Certificate{
+		IsCA:                  false,
+		BasicConstraintsValid: true,
+		SubjectKeyId:          []byte{7, 8, 9},
+		SerialNumber:          big.NewInt(9101112),
+		Subject: pkix.Name{
+			Country:      []string{"Jupiter"},
+			Organization: []string{"Red"},
+		},
+		NotBefore: time.Now().Add(-time.Hour),
+		NotAfter:  time.Now().Add(time.Hour),
+		KeyUsage:  x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+	}, k)
+
+	err = verifyCertChain(cert, parent, [][]byte{intermediate.Raw})
 	if err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestAttest(t *testing.T) {
-	privateKey, cert, parent := newCertAndCabundle(t)
+	k, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parent := createParentCert(t, k)
+
+	intermediate := createChildCert(t, parent, &x509.Certificate{
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		SubjectKeyId:          []byte{4, 5, 6},
+		SerialNumber:          big.NewInt(5678),
+		Subject: pkix.Name{
+			Country:      []string{"Mars"},
+			Organization: []string{"Olympus Mons"},
+		},
+		NotBefore: time.Now().Add(-time.Hour),
+		NotAfter:  time.Now().Add(time.Hour),
+		KeyUsage:  x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+	}, k)
+
+	cert := createChildCert(t, intermediate, &x509.Certificate{
+		IsCA:                  false,
+		BasicConstraintsValid: true,
+		SubjectKeyId:          []byte{7, 8, 9},
+		SerialNumber:          big.NewInt(9101112),
+		Subject: pkix.Name{
+			Country:      []string{"Jupiter"},
+			Organization: []string{"Red"},
+		},
+		NotBefore: time.Now().Add(-time.Hour),
+		NotAfter:  time.Now().Add(time.Hour),
+		KeyUsage:  x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+	}, k)
 
 	doc := &AttestationDoc{
 		ModuleID:    "my-module",
@@ -164,7 +214,7 @@ func TestAttest(t *testing.T) {
 		Digest:      "abcd",
 		PCRs:        map[int][]byte{0: []byte("pcrpcrpcr")},
 		Certificate: cert.Raw,
-		Cabundle:    [][]byte{parent},
+		Cabundle:    [][]byte{intermediate.Raw},
 		PublicKey:   []byte("pub key"),
 	}
 
@@ -173,7 +223,7 @@ func TestAttest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	signer, err := cose.NewSigner(cose.AlgorithmES384, privateKey)
+	signer, err := cose.NewSigner(cose.AlgorithmES384, k)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,12 +242,7 @@ func TestAttest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	parentCert, err := x509.ParseCertificate(parent)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	newDoc, err := Attest(sign1, parentCert)
+	newDoc, err := Attest(sign1, parent)
 	if err != nil {
 		t.Fatal(err)
 	}
