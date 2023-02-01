@@ -266,6 +266,7 @@ func TestAttest(t *testing.T) {
 		Certificate: cert.Raw,
 		Cabundle:    [][]byte{intermediate.Raw},
 		PublicKey:   []byte("pub key"),
+		Nonce:       []byte("abcd"),
 	}
 
 	by, err := cbor.Marshal(doc)
@@ -292,7 +293,7 @@ func TestAttest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	newDoc, err := Attest(sign1, parent)
+	newDoc, err := Attest(sign1, []byte("abcd"), parent)
 	if err != nil {
 		t.Fatal(err)
 	}

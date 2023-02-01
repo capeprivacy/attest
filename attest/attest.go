@@ -37,7 +37,10 @@ type AttestationDoc struct {
 	Cabundle    [][]byte
 	PublicKey   []byte `cbor:"public_key"`
 	UserData    []byte `cbor:"user_data"`
+	Nonce       []byte `cbor:"nonce"`
 }
+
+var ErrValidatingNonce = errors.New("error validating nonce")
 
 func createSign1(d []byte) (*cose.Sign1Message, error) {
 	var m sign1Message
@@ -102,7 +105,7 @@ func verifyCertChain(cert *x509.Certificate, rootCert *x509.Certificate, cabundl
 	return nil
 }
 
-func Attest(attestation []byte, rootCert *x509.Certificate) (*AttestationDoc, error) {
+func Attest(attestation []byte, nonce []byte, rootCert *x509.Certificate) (*AttestationDoc, error) {
 	msg, err := createSign1(attestation)
 	if err != nil {
 		return nil, err
@@ -113,6 +116,10 @@ func Attest(attestation []byte, rootCert *x509.Certificate) (*AttestationDoc, er
 	if err != nil {
 		log.Errorf("Error unmarshalling cbor document: %v", err)
 		return nil, err
+	}
+
+	if nonce != nil && !bytes.Equal(nonce, doc.Nonce) {
+		return nil, ErrValidatingNonce
 	}
 
 	cert, err := x509.ParseCertificate(doc.Certificate)
