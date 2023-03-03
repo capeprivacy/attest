@@ -20,25 +20,25 @@ import (
 	"github.com/veraison/go-cose"
 )
 
-type Params struct {
-	RootCert *x509.Certificate
-	FakeTime bool
+type params struct {
+	rootCert *x509.Certificate
+	fakeTime bool
 }
 
 // WithRootCert sets the root certificate to use. By default attestation uses
 // the aws root certificate.
-func WithRootCert(rootCert *x509.Certificate) func(params *Params) {
-	return func(params *Params) {
-		params.RootCert = rootCert
+func WithRootCert(rootCert *x509.Certificate) func(params *params) {
+	return func(params *params) {
+		params.rootCert = rootCert
 	}
 }
 
 // WithFakeTime sets the fake time parameter when attesting. This
 // makes its so the time will be faked so that verifying the certificate
 // will pass even if the certificate is expired.
-func WithFakeTime() func(params *Params) {
-	return func(params *Params) {
-		params.FakeTime = true
+func WithFakeTime() func(params *params) {
+	return func(params *params) {
+		params.fakeTime = true
 	}
 }
 
@@ -127,8 +127,8 @@ func verifyCertChain(cert *x509.Certificate, rootCert *x509.Certificate, cabundl
 	return nil
 }
 
-func Attest(attestation []byte, nonce []byte, pFuncs ...func(params *Params)) (*AttestationDoc, error) {
-	params := &Params{}
+func Attest(attestation []byte, nonce []byte, pFuncs ...func(params *params)) (*AttestationDoc, error) {
+	params := &params{}
 	for _, fun := range pFuncs {
 		fun(params)
 	}
@@ -159,7 +159,7 @@ func Attest(attestation []byte, nonce []byte, pFuncs ...func(params *Params)) (*
 		return nil, err
 	}
 
-	rootCert := params.RootCert
+	rootCert := params.rootCert
 	if rootCert == nil {
 		c, err := GetRootAWSCert()
 		if err != nil {
