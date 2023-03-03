@@ -20,6 +20,28 @@ import (
 	"github.com/veraison/go-cose"
 )
 
+type Params struct {
+	RootCert *x509.Certificate
+	FakeTime bool
+}
+
+// WithRootCert sets the root certificate to use. By default attestation uses
+// the aws root certificate.
+func WithRootCert(rootCert *x509.Certificate) func(params *Params) {
+	return func(params *Params) {
+		params.RootCert = rootCert
+	}
+}
+
+// WithFakeTime sets the fake time parameter when attesting. This
+// makes its so the time will be faked so that verifying the certificate
+// will pass even if the certificate is expired.
+func WithFakeTime() func(params *Params) {
+	return func(params *Params) {
+		params.FakeTime = true
+	}
+}
+
 type sign1Message struct {
 	_           struct{} `cbor:",toarray"`
 	Protected   cbor.RawMessage
@@ -105,7 +127,12 @@ func verifyCertChain(cert *x509.Certificate, rootCert *x509.Certificate, cabundl
 	return nil
 }
 
-func Attest(attestation []byte, nonce []byte, rootCert *x509.Certificate) (*AttestationDoc, error) {
+func Attest(attestation []byte, nonce []byte, pFuncs ...func(params *Params)) (*AttestationDoc, error) {
+	params := &Params{}
+	for _, fun := range pFuncs {
+		fun(params)
+	}
+
 	msg, err := createSign1(attestation)
 	if err != nil {
 		return nil, err
@@ -132,11 +159,18 @@ func Attest(attestation []byte, nonce []byte, rootCert *x509.Certificate) (*Atte
 		return nil, err
 	}
 
-	if rootCert != nil {
-		if err := verifyCertChain(cert, rootCert, doc.Cabundle); err != nil {
-			log.Errorf("Error verifying certificate chain: %v", err)
+	rootCert := params.RootCert
+	if rootCert == nil {
+		c, err := GetRootAWSCert()
+		if err != nil {
 			return nil, err
 		}
+		rootCert = c
+	}
+
+	if err := verifyCertChain(cert, rootCert, doc.Cabundle); err != nil {
+		log.Errorf("Error verifying certificate chain: %v", err)
+		return nil, err
 	}
 
 	return doc, nil

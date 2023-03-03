@@ -293,7 +293,7 @@ func TestAttest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	newDoc, err := Attest(sign1, []byte("abcd"), parent)
+	newDoc, err := Attest(sign1, []byte("abcd"), WithRootCert(parent))
 	if err != nil {
 		t.Fatal(err)
 	}
