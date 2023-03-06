@@ -166,7 +166,7 @@ func TestVerifyCertChains(t *testing.T) {
 		KeyUsage:  x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 	}, k)
 
-	err = verifyCertChain(cert, parent, [][]byte{intermediate.Raw})
+	err = verifyCertChain(cert, parent, [][]byte{intermediate.Raw}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestVerifyInvalidIntermediate(t *testing.T) {
 		KeyUsage:  x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 	}, k)
 
-	err = verifyCertChain(cert, parent, [][]byte{intermediate.Raw})
+	err = verifyCertChain(cert, parent, [][]byte{intermediate.Raw}, time.Time{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -220,6 +220,34 @@ func TestVerifyInvalidIntermediate(t *testing.T) {
 	if err.Error() != "x509: certificate signed by unknown authority" {
 		t.Fatal("expected certificate signed by unknown authority error")
 	}
+}
+
+func generateSign1(t *testing.T, doc *AttestationDoc, k *ecdsa.PrivateKey) []byte {
+	by, err := cbor.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	signer, err := cose.NewSigner(cose.AlgorithmES384, k)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msg := cose.NewSign1Message()
+	msg.Payload = by
+	msg.Headers.Protected.SetAlgorithm(cose.AlgorithmES384)
+
+	err = msg.Sign(rand.Reader, nil, signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sign1, err := msg.MarshalCBOR()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return sign1
 }
 
 func TestAttest(t *testing.T) {
@@ -269,31 +297,11 @@ func TestAttest(t *testing.T) {
 		Nonce:       []byte("abcd"),
 	}
 
-	by, err := cbor.Marshal(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
+	sign1 := generateSign1(t, doc, k)
 
-	signer, err := cose.NewSigner(cose.AlgorithmES384, k)
-	if err != nil {
-		t.Fatal(err)
-	}
+	v := NewVerifier(WithRootCert(parent))
 
-	msg := cose.NewSign1Message()
-	msg.Payload = by
-	msg.Headers.Protected.SetAlgorithm(cose.AlgorithmES384)
-
-	err = msg.Sign(rand.Reader, nil, signer)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	sign1, err := msg.MarshalCBOR()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	newDoc, err := Attest(sign1, []byte("abcd"), parent)
+	newDoc, err := v.Verify(sign1, []byte("abcd"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,5 +331,51 @@ func TestGetRootAWSCert(t *testing.T) {
 
 	if !cert.Equal(want) {
 		t.Fatal("downloaded cert doesn't match wanted cert")
+	}
+}
+
+func TestParseAttestationDocument(t *testing.T) {
+	k, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type args struct {
+		attestation []byte
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    *AttestationDoc
+		wantErr bool
+	}{
+		{
+			name: "success",
+			args: args{
+				attestation: generateSign1(t, &AttestationDoc{}, k),
+			},
+			want:    &AttestationDoc{},
+			wantErr: false,
+		},
+		{
+			name: "error creating sign1",
+			args: args{
+				attestation: []byte{},
+			},
+			want:    nil,
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseAttestationDocument(tt.args.attestation)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseAttestationDocument() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ParseAttestationDocument() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

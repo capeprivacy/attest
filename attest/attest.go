@@ -20,6 +20,35 @@ import (
 	"github.com/veraison/go-cose"
 )
 
+type Verifier struct {
+	rootCert    *x509.Certificate
+	currentTime time.Time
+}
+
+type VerifierOpt func(*Verifier)
+
+func NewVerifier(opts ...VerifierOpt) *Verifier {
+	v := new(Verifier)
+	for _, opt := range opts {
+		opt(v)
+	}
+	return v
+}
+
+// WithRootCert sets the root certificate to use. By default attestation uses
+// the aws root certificate.
+func WithRootCert(rootCert *x509.Certificate) VerifierOpt {
+	return func(v *Verifier) {
+		v.rootCert = rootCert
+	}
+}
+
+func WithCurrentTime(time time.Time) VerifierOpt {
+	return func(v *Verifier) {
+		v.currentTime = time
+	}
+}
+
 type sign1Message struct {
 	_           struct{} `cbor:",toarray"`
 	Protected   cbor.RawMessage
@@ -77,7 +106,7 @@ func verifySignature(cert *x509.Certificate, msg *cose.Sign1Message) error {
 	return msg.Verify([]byte{}, verifier)
 }
 
-func verifyCertChain(cert *x509.Certificate, rootCert *x509.Certificate, cabundle [][]byte) error {
+func verifyCertChain(cert *x509.Certificate, rootCert *x509.Certificate, cabundle [][]byte, currentTime time.Time) error {
 	roots := x509.NewCertPool()
 
 	roots.AddCert(rootCert)
@@ -95,7 +124,7 @@ func verifyCertChain(cert *x509.Certificate, rootCert *x509.Certificate, cabundl
 	opts := x509.VerifyOptions{
 		Roots:         roots,
 		Intermediates: intermediates,
-		CurrentTime:   time.Now().UTC(),
+		CurrentTime:   currentTime,
 	}
 
 	if _, err := cert.Verify(opts); err != nil {
@@ -105,7 +134,7 @@ func verifyCertChain(cert *x509.Certificate, rootCert *x509.Certificate, cabundl
 	return nil
 }
 
-func Attest(attestation []byte, nonce []byte, rootCert *x509.Certificate) (*AttestationDoc, error) {
+func (v *Verifier) Verify(attestation []byte, nonce []byte) (*AttestationDoc, error) {
 	msg, err := createSign1(attestation)
 	if err != nil {
 		return nil, err
@@ -132,11 +161,18 @@ func Attest(attestation []byte, nonce []byte, rootCert *x509.Certificate) (*Atte
 		return nil, err
 	}
 
-	if rootCert != nil {
-		if err := verifyCertChain(cert, rootCert, doc.Cabundle); err != nil {
-			log.Errorf("Error verifying certificate chain: %v", err)
+	rootCert := v.rootCert
+	if rootCert == nil {
+		c, err := GetRootAWSCert()
+		if err != nil {
 			return nil, err
 		}
+		rootCert = c
+	}
+
+	if err := verifyCertChain(cert, rootCert, doc.Cabundle, v.currentTime); err != nil {
+		log.Errorf("Error verifying certificate chain: %v", err)
+		return nil, err
 	}
 
 	return doc, nil
@@ -197,4 +233,23 @@ func GetRootAWSCert() (*x509.Certificate, error) {
 	}
 
 	return x509.ParseCertificate(bl.Bytes)
+}
+
+// ParseAttestationDocument is a utility method to return a Attestation Document
+// without actually verifying it. Useful for if you need some info out of the
+// document but you don't need to verify it.
+func ParseAttestationDocument(attestation []byte) (*AttestationDoc, error) {
+	msg, err := createSign1(attestation)
+	if err != nil {
+		return nil, err
+	}
+
+	doc := &AttestationDoc{}
+	err = cbor.Unmarshal(msg.Payload, doc)
+	if err != nil {
+		log.Errorf("Error unmarshalling cbor document: %v", err)
+		return nil, err
+	}
+
+	return doc, nil
 }
